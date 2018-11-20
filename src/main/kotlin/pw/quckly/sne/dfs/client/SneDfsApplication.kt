@@ -1,33 +1,32 @@
-package pw.quckly.sne.dfs
+package pw.quckly.sne.dfs.client
 
 import jnr.ffi.Platform
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.CommandLineRunner
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
-import org.springframework.boot.CommandLineRunner
 import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Bean
+import ru.serce.jnrfuse.struct.FuseFileInfo
 import java.nio.file.Paths
-import java.util.*
-
 
 @SpringBootApplication
 class SneDfsApplication {
 
     @Bean
-    fun commandLineRunner(ctx: ApplicationContext): CommandLineRunner {
+    fun commandLineRunner(ctx: ApplicationContext, @Autowired dfs: DFS): CommandLineRunner {
         return CommandLineRunner { args ->
             println("Args: ${args.joinToString()}")
 
-            val memfs = DFS()
             try {
                 val path: String
                 when (Platform.getNativePlatform().os) {
                     jnr.ffi.Platform.OS.WINDOWS -> path = "J:\\"
                     else -> path = "/tmp/mntm"
                 }
-                memfs.mount(Paths.get(path), true, true)
+                dfs.mount(Paths.get(path), true, true)
             } finally {
-                memfs.umount()
+                dfs.umount()
             }
         }
     }

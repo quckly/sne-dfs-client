@@ -1,4 +1,4 @@
-package pw.quckly.sne.dfs
+package pw.quckly.sne.dfs.client
 
 import org.junit.Test
 import org.junit.runner.RunWith
