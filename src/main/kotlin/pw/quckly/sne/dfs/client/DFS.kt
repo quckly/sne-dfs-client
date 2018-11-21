@@ -4,11 +4,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.github.kittinunf.fuel.Fuel
-import com.github.kittinunf.fuel.core.FuelError
-import com.github.kittinunf.fuel.core.Request
-import com.github.kittinunf.fuel.core.Response
 import com.github.kittinunf.fuel.jackson.responseObject
-import com.github.kittinunf.result.Result
 import jnr.ffi.Platform
 import jnr.ffi.Platform.OS.WINDOWS
 import jnr.ffi.Pointer
@@ -25,6 +21,7 @@ import ru.serce.jnrfuse.struct.FileStat
 import ru.serce.jnrfuse.struct.FuseFileInfo
 import ru.serce.jnrfuse.struct.Statvfs
 import java.lang.Exception
+import java.util.*
 
 @Component
 class DFS : FuseStubFS() {
@@ -47,59 +44,97 @@ class DFS : FuseStubFS() {
 
             val (fuelRequest, fuelResponse, fuelResult) = Fuel.post("$masterAddress$apiUrlPath")
                     .jsonBody(requestJson)
+                    .timeout(requestTimeout)
+                    .timeoutRead(requestTimeout)
                     .responseObject<R>()
 
             return fuelResult.fold(handler, inerr@ { error ->
-                logger.error("Error on invoke master", error)
-
                 try {
                     val result = jsonMapper.readValue(error.errorData, StatusResponse::class.java)
 
+                    logger.warn("FS error from master (${result.message ?: ""})")
+
                     return@inerr result.status
                 } catch (e: Exception) {
-                    // Do nothing
+                    logger.error("Error on invoke master (${error.message ?: ""})", error)
                 }
 
                 return@inerr ErrorCodes.EIO()
             })
         } catch (e: Exception) {
-            e.printStackTrace()
+            logger.error("Error on invoke master", e)
             return ErrorCodes.EIO()
         }
     }
 
     override fun read(path: String?, buf: Pointer?, @size_t size: Long, @off_t offset: Long, fi: FuseFileInfo?): Int {
-        if (path == null) {
+        if (path == null || buf == null || fi == null) {
             return (-1) * ErrorCodes.EINVAL()
         }
 
-        val readRequest = ReadRequest(path)
-
-        return (-1) * handleCall("Read",
-                path,
-                "/fs/read",
-                readRequest) { response: ReadResponse ->
-
-            // TODO: response.data
-
-            response.status
-        }
+//        val readRequest = ReadRequest(path)
+//
+//        return (-1) * handleCall("Read",
+//                path,
+//                "/fs/read",
+//                readRequest) { response: ReadResponse ->
+//
+//            // TODO: response.data
+//
+//            response.status
+//        }
+        buf.put(0, ByteArray(size.toInt(), { 0x37 }), 0, size.toInt())
+        return 0
     }
 
     override fun write(path: String?, buf: Pointer?, @size_t size: Long, @off_t offset: Long, fi: FuseFileInfo?): Int {
-        if (path == null) {
+        if (path == null || buf == null || fi == null) {
             return (-1) * ErrorCodes.EINVAL()
         }
 
-        val writeRequest = WriteRequest
-
-        return (-1) * handleCall("Write",
-                path,
-                "/fs/write",
-                writeRequest) { response: StatusResponse ->
-
-            response.status
+        if (size == 0L) {
+            return 0
         }
+
+        // All borders are inclusive
+        var leftBorder = offset
+        val rightBorder = offset + size - 1
+
+        val results = ArrayList<Int>()
+
+        while (leftBorder <= rightBorder) {
+            val relativeBeginOffset = leftBorder - offset
+            val chunkId = getFileChunkByOffset(leftBorder).toInt()
+            val lastOffsetOfCurrentChunk = (chunkId.toLong() + 1) * CHUNK_SIZE - 1
+            val lastByteToProcessInCurrentChunk = Math.min(lastOffsetOfCurrentChunk, rightBorder)
+            val countOfBytesToProcessInCurrentChunk = (lastByteToProcessInCurrentChunk - leftBorder + 1).toInt()
+
+            val bytesToWrite = ByteArray(countOfBytesToProcessInCurrentChunk)
+            buf.get(relativeBeginOffset, bytesToWrite, 0, countOfBytesToProcessInCurrentChunk)
+
+            val b64data = b64encoder.encode(bytesToWrite).toString(Charsets.UTF_8)
+
+            val writeRequest = WriteRequest(path,
+                    offset = leftBorder,
+                    data = b64data)
+
+            results.add(handleCall("Write",
+                    path,
+                    "/fs/write",
+                    writeRequest) { response: StatusResponse -> response.status })
+
+            leftBorder += countOfBytesToProcessInCurrentChunk
+        }
+
+        if (results.all { it == 0 }) {
+            return 0
+        }
+
+        if (results.any { it == ErrorCodes.ENOSPC() }) {
+            return (-1) * ErrorCodes.ENOSPC()
+        }
+
+        return (-1) * ErrorCodes.EIO()
     }
 
     override fun create(path: String?, @mode_t mode: Long, fi: FuseFileInfo?): Int {
@@ -246,10 +281,17 @@ class DFS : FuseStubFS() {
         return 0
     }
 
+    fun getFileChunkByOffset(offset: Long) = (offset / CHUNK_SIZE)
+
     companion object {
         val logger = LoggerFactory.getLogger(DFS::class.java)
 
         val jsonMapper = ObjectMapper().registerKotlinModule()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+
+        val b64encoder = Base64.getEncoder()
+        val b64decoder = Base64.getDecoder()
+
+        val CHUNK_SIZE = 4 * 1024
     }
 }
