@@ -8,7 +8,7 @@ data class StatusResponse(val status: Int, val message: String? = null)
 data class IntResponse(val status: Int, val value: Int)
 
 // Per operation
-data class ReadRequest(val path: String, val size: Long, val offset: Long)
+data class ReadRequest(val path: String, val offset: Long, val size: Long)
 data class ReadResponse(val status: Int, val data: String)
 
 data class WriteRequest(val path: String, val offset: Long, val data: String)

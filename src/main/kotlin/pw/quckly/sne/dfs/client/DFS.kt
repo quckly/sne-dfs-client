@@ -20,7 +20,9 @@ import ru.serce.jnrfuse.FuseStubFS
 import ru.serce.jnrfuse.struct.FileStat
 import ru.serce.jnrfuse.struct.FuseFileInfo
 import ru.serce.jnrfuse.struct.Statvfs
+import ru.serce.jnrfuse.struct.Timespec
 import java.lang.Exception
+import java.lang.IllegalArgumentException
 import java.util.*
 
 @Component
@@ -68,27 +70,63 @@ class DFS : FuseStubFS() {
     }
 
     override fun read(path: String?, buf: Pointer?, @size_t size: Long, @off_t offset: Long, fi: FuseFileInfo?): Int {
-        if (path == null || buf == null || fi == null) {
+        if (path == null || buf == null) {
             return (-1) * ErrorCodes.EINVAL()
         }
 
-//        val readRequest = ReadRequest(path)
-//
-//        return (-1) * handleCall("Read",
-//                path,
-//                "/fs/read",
-//                readRequest) { response: ReadResponse ->
-//
-//            // TODO: response.data
-//
-//            response.status
-//        }
-        buf.put(0, ByteArray(size.toInt(), { 0x37 }), 0, size.toInt())
-        return 0
+        // All borders are inclusive
+        var leftBorder = offset
+        val rightBorder = offset + size - 1
+
+        var resultByteArray = ByteArray(0)
+
+        while (leftBorder <= rightBorder) {
+            val relativeBeginOffset = leftBorder - offset
+            val chunkId = getFileChunkByOffset(leftBorder).toInt()
+            val lastOffsetOfCurrentChunk = (chunkId.toLong() + 1) * CHUNK_SIZE - 1
+            val lastByteToProcessInCurrentChunk = Math.min(lastOffsetOfCurrentChunk, rightBorder)
+            val countOfBytesToProcessInCurrentChunk = (lastByteToProcessInCurrentChunk - leftBorder + 1).toInt()
+
+            val readRequest = ReadRequest(path,
+                    offset = leftBorder,
+                    size = countOfBytesToProcessInCurrentChunk.toLong())
+
+            var readedBytes: ByteArray? = null
+            val status = handleCall("Read",
+                    path,
+                    "/fs/read",
+                    readRequest) { response: ReadResponse ->
+
+                try {
+                    readedBytes = b64decoder.decode(response.data)
+                } catch (e: IllegalArgumentException) {
+                    -1
+                }
+
+                response.status }
+
+            val readedBytesNotNull = readedBytes
+            if (readedBytesNotNull == null)
+                break
+
+            if (status == 0) {
+                resultByteArray += readedBytesNotNull
+            }
+
+            // End of file
+            if (readedBytesNotNull.size < countOfBytesToProcessInCurrentChunk)
+                break
+
+            leftBorder += countOfBytesToProcessInCurrentChunk
+        }
+
+        buf.put(0, resultByteArray, 0, resultByteArray.size)
+
+        return resultByteArray.size
     }
 
     override fun write(path: String?, buf: Pointer?, @size_t size: Long, @off_t offset: Long, fi: FuseFileInfo?): Int {
-        if (path == null || buf == null || fi == null) {
+        if (path == null || buf == null) {
             return (-1) * ErrorCodes.EINVAL()
         }
 
@@ -127,7 +165,7 @@ class DFS : FuseStubFS() {
         }
 
         if (results.all { it == 0 }) {
-            return 0
+            return size.toInt()
         }
 
         if (results.any { it == ErrorCodes.ENOSPC() }) {
@@ -138,7 +176,7 @@ class DFS : FuseStubFS() {
     }
 
     override fun create(path: String?, @mode_t mode: Long, fi: FuseFileInfo?): Int {
-        if (path == null || fi == null) {
+        if (path == null) {
             return (-1) * ErrorCodes.EINVAL()
         }
 
@@ -185,7 +223,7 @@ class DFS : FuseStubFS() {
     }
 
     override fun readdir(path: String?, buf: Pointer?, filter: FuseFillDir?, @off_t offset: Long, fi: FuseFileInfo?): Int {
-        if (path == null || buf == null || filter == null || fi == null) {
+        if (path == null || buf == null || filter == null) {
             return (-1) * ErrorCodes.EINVAL()
         }
 
@@ -216,6 +254,13 @@ class DFS : FuseStubFS() {
                 stbuf.f_blocks.set(1024 * 1024) // total data blocks in file system
                 stbuf.f_frsize.set(1024)        // fs block size
                 stbuf.f_bfree.set(1024 * 1024)  // free blocks in fs
+            }
+        } else {
+            if ("/" == path) {
+                stbuf.f_blocks.set(1024 * 1024) // total data blocks in file system
+                stbuf.f_frsize.set(4096)        // fs block size
+                stbuf.f_bfree.set(1024 * 1024)  // free blocks in fs
+                stbuf.f_bavail.set(1024 * 1024)
             }
         }
         return super.statfs(path, stbuf)
@@ -278,6 +323,14 @@ class DFS : FuseStubFS() {
     }
 
     override fun open(path: String?, fi: FuseFileInfo?): Int {
+        return 0
+    }
+
+    override fun setxattr(path: String?, name: String?, value: Pointer?, size: Long, flags: Int): Int {
+        return 0
+    }
+
+    override fun utimens(path: String?, timespec: Array<out Timespec>?): Int {
         return 0
     }
 

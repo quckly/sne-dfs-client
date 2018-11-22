@@ -1,5 +1,7 @@
 app:
+  client:
+    mountpath: /tmp/mnt
   master:
     address: http://127.0.0.1:10001
   requests:
-    timeout: 5000
+    timeout: 10000
