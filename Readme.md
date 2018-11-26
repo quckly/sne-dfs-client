@@ -29,5 +29,7 @@ java -jar build/libs/sne-dfs-client-0.0.1-SNAPSHOT.jar \
 
 ## Links:
 Master server: https://github.com/quckly/sne-dfs-master 
+
 Client application: https://github.com/quckly/sne-dfs-client 
+
 Storage server: https://github.com/wavvs/dfstorage 
