@@ -16,6 +16,9 @@ Build
 ## Run
 Start DFS client and mount FS to /tmp/mnt
 ```sh
+# Make sure /tmp/mnt is created
+mkdir /tmp/mnt
+
 java -jar build/libs/sne-dfs-client-0.0.1-SNAPSHOT.jar \
 --app.client.mountpath=/tmp/mnt \
 --app.master.address=http://127.0.0.1:10001 \
